@@ -11,13 +11,13 @@ In order to begin using this plug-in, follow the steps below in your Google acco
 4. Select 'Create Credentials' - 'OAuth client ID'. Under Application type select 'Other' and specify a name for the client ID.
 5. You will need to enter the client ID and client secret when you use the plug-in for the first time.
 
-To install SendGmail, download it to a suitable location and modify the `[sendemail]` section of your .gitconfig file as follows:
+To install SendGmail, download and run. SendGmail will copy itself under %APPDATA%, set up the `[sendemail]` section of your global .gitconfig file as shown below, and ask to send you a test e-mail.
 
     [sendemail]
-	smtpserver = "C:/full/path/to/SendGmail.exe"
+	smtpserver = C:/full/path/to/SendGmail.exe
 	smtpuser = you@gmail.com
 
-SendGmail will ask you to enter the client ID and client secret the next time you use git-send-email, and perform an OOB OAuth authorization sequence. Afterwards it will attempt to refresh OAuth access tokens automatically.
+SendGmail will ask you to enter the client ID and client secret, and perform an OOB OAuth authorization sequence. The next time you use git-send-email, it will attempt to refresh OAuth access tokens automatically.
 
 Rationale
 ---------

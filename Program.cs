@@ -1,6 +1,7 @@
 ﻿using System ;
 using System.IO ;
 using System.Collections.Generic ;
+using System.Globalization ;
 using System.Text ;
 using System.Threading.Tasks ;
 using System.Net.Http ;
@@ -31,11 +32,14 @@ namespace SendGmail
 
             try
             {
-                return await SendGmail.RunAsync (args) ;
+                if (args.Length == 0)
+                    return await InstallAsync () ;
+
+                return await SendGmail.RunAsync (Console.OpenStandardInput ()) ;
             }
-            catch (NonInteractiveException)
+            catch (MyException e)
             {
-                Console.Error.WriteLine ("Run SendGmail in interactive mode to acquire credentials.") ;
+                Console.Error.WriteLine (e.Message) ;
                 return 1 ;
             }
             catch (Exception e)
@@ -44,9 +48,126 @@ namespace SendGmail
                 return 1 ;
             }
         }
+
+        static async Task<int> InstallAsync ()
+        {
+            if (Console.IsInputRedirected)
+            {
+                Console.Error.WriteLine ($"Run {nameof (SendGmail)} in interactive mode to install.") ;
+                return 1 ;
+            }
+
+            string server ;
+            try
+            {
+                if (!GitGetConfig ("sendemail.smtpserver", out server) && server != "")
+                {
+                    Console.Error.WriteLine ("git config failed with message " + server) ;
+                    return 1 ;
+                }
+            }
+            catch (Exception e)
+            {
+                Console.Error.WriteLine ("git not found in %PATH%, or other problems running git:") ;
+                Console.Error.WriteLine (e.Message) ;
+                return 1 ;
+            }
+
+            if (!server.Contains (nameof (SendGmail)) || !File.Exists (server.Replace ('/', '\\')))
+            {
+                if (!SendGmail.Confirm ($"Install {nameof (SendGmail)} as your git-send-email plug-in?"))
+                    return 1 ;
+
+                var folder = Path.Combine (Environment.GetFolderPath (Environment.SpecialFolder.ApplicationData), "atykhyy", nameof (SendGmail)) ;
+                Directory.CreateDirectory (folder) ;
+                var target = Path.Combine (folder, nameof (SendGmail) + ".exe") ;
+                File.Copy (System.Reflection.Assembly.GetExecutingAssembly ().Location, target) ;
+
+                // git-send-email wants its slashes straight
+                // add outer quotes in case of spaces in path
+                GitSetConfig ("sendemail.smtpserver", $"\"{target.Replace ('\\', '/')}\"") ;
+            }
+
+            if (!GitGetConfig ("user.name", out var username) || !GitGetConfig ("user.email", out var useremail))
+            {
+                Console.Error.WriteLine ("user.name and/or user.email are not configured.") ;
+                Console.Error.WriteLine ($"Please configure and rerun {nameof (SendGmail)}.") ;
+                return 1 ;
+            }
+
+            if (!SendGmail.Confirm ($"Send a test email to {useremail} to set up credentials (recommended)?"))
+                return 0 ;
+
+            if (!GitGetConfig ("sendemail.smtpuser", out var smtpuser) && smtpuser == "")
+            {
+                for (smtpuser = useremail ; !SendGmail.Confirm ($"Is {smtpuser} the Gmail address you want to use with git-send-email?") ; )
+                {
+                    Console.WriteLine ("Enter your Gmail address for git-send-email:") ;
+                    smtpuser = Console.ReadLine () ;
+                }
+
+                GitSetConfig ("sendemail.smtpuser", smtpuser) ;
+            }
+
+            var now   = DateTimeOffset.Now ;
+            var email = $"From: {username} <{smtpuser}>\nTo: {useremail}\nSubject: Hello from {nameof (SendGmail)}\n" +
+                        $"Date: {now.ToString ("ddd, dd MMM yyyy HH':'mm':'ss K", CultureInfo.InvariantCulture)}\n" +
+                        $"Message-Id: <{now.UtcDateTime.ToString ("yyyyMMddHHmmss'.'ffff", CultureInfo.InvariantCulture)}-1-{smtpuser}>\n" +
+                        $"X-Mailer: {nameof (SendGmail)} 1.0\n" +
+                        "MIME-Version: 1.0\n" +
+                        "Content-Transfer-Encoding: 8bit\n\n" +
+                        $"Hello from {nameof (SendGmail)}!\n" ;
+
+            return await SendGmail.RunAsync (new MemoryStream (Encoding.ASCII.GetBytes (email))) ;
+        }
+
+        static bool GitGetConfig (string key, out string value)
+        {
+            if (GitExec ("config --global --get " + key, out value))
+            {
+                value = value.Trim () ;
+                return true ;
+            }
+            else
+                return false ;
+        }
+
+        static void GitSetConfig (string key, string value)
+        {
+            if (!GitExec ("config --global " + key + " " + value, out value))
+                throw new InvalidOperationException ($"Failed to configure {key}. Git output: {value}") ;
+        }
+
+        static bool GitExec (string arguments, out string result)
+        {
+            using (var p = System.Diagnostics.Process.Start (new System.Diagnostics.ProcessStartInfo ("git", arguments)
+            {
+                UseShellExecute        = false,
+                RedirectStandardError  = true,
+                RedirectStandardOutput = true,
+            }))
+            {
+                if (!p.WaitForExit (1000))
+                    throw new TimeoutException () ;
+
+                if (p.ExitCode != 0)
+                {
+                    result = p.StandardError.ReadToEnd () ;
+                    return false ;
+                }
+                else
+                {
+                    result = p.StandardOutput.ReadToEnd () ;
+                    return true ;
+                }
+            }
+        }
     }
 
-    sealed class NonInteractiveException : Exception {}
+    sealed class MyException : Exception
+    {
+        public MyException (string message) : base (message) {}
+    }
 
     static class SendGmail
     {
@@ -59,10 +180,10 @@ namespace SendGmail
 
         static readonly Newtonsoft.Json.JsonSerializer Json = Newtonsoft.Json.JsonSerializer.CreateDefault () ;
 
-        public static async Task<int> RunAsync (string[] args)
+        public static async Task<int> RunAsync (Stream unbufferedInput)
         {
             ArraySegment<byte> content ;
-            using (var input  = new BufferedStream (Console.OpenStandardInput (), 0x10000))
+            using (var input  = new BufferedStream (unbufferedInput, 0x10000))
             using (var memory = new MemoryStream   ())
             {
                 memory.WriteAscii ("{\"raw\":\"") ;
@@ -221,15 +342,22 @@ namespace SendGmail
                 Console.Error.WriteLine (error) ;
                 return false ;
             }
+            else
+                return Confirm (error + " Keep trying?") ;
+        }
 
-            Console.Out.WriteLine (error + " Keep trying? (y/n)") ;
-            return Console.ReadKey (false).Key == ConsoleKey.Y ;
+        internal static bool Confirm (string prompt)
+        {
+            Console.Out.WriteLine (prompt + " (y/n)") ;
+            var key = Console.ReadKey (false).Key ;
+            Console.Out.WriteLine () ;
+            return key == ConsoleKey.Y ;
         }
 
         private static string ReadPassword (string prompt)
         {
             if (!NativeConsole.HaveInput)
-                throw new NonInteractiveException () ;
+                throw new MyException ($"Run {nameof (SendGmail)} in interactive mode to acquire credentials.") ;
 
             Console.Out.WriteLine (prompt) ;
             var sb = new StringBuilder  () ;
