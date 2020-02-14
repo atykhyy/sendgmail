@@ -28,6 +28,13 @@ namespace SendGmail
                     return System.Reflection.Assembly.Load (bytes) ;
                 }
             } ;
+
+            var iv = (System.Reflection.AssemblyInformationalVersionAttribute) Attribute.GetCustomAttribute (
+                      System.Reflection.Assembly.GetExecutingAssembly (), typeof (
+                      System.Reflection.AssemblyInformationalVersionAttribute)) ;
+
+            if (iv != null)
+                Console.Error.WriteLine ($"{nameof (SendGmail)} rev. {iv.InformationalVersion}") ;
             #endif
 
             try

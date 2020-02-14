@@ -24,6 +24,22 @@
   </ItemGroup>
   <Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk" />
   <Target Name="AfterResolveReferences" Condition="'$(Configuration)'=='Release'">
+    <Exec Command="git.exe log -1 --format=%%h ." ConsoleToMSBuild="true">
+      <Output TaskParameter="ConsoleOutput" PropertyName="GitCommit" />
+    </Exec>
+    <PropertyGroup>
+      <InfoVersionFile>$(IntermediateOutputPath)AssemblyInfoVersion.cs</InfoVersionFile>
+      <InfoVersionNew>[assembly:System.Reflection.AssemblyInformationalVersion(&quot;$(GitCommit)&quot;)]</InfoVersionNew>
+    </PropertyGroup>
+    <!-- rewrite version file if version changed -->
+    <ReadLinesFromFile File="$(InfoVersionFile)">
+      <Output TaskParameter="Lines" PropertyName="InfoVersionOld"/>
+    </ReadLinesFromFile>
+    <WriteLinesToFile File="$(InfoVersionFile)" Overwrite="true" Lines="$(InfoVersionNew)" Condition="'$(InfoVersionOld)'!='$(InfoVersionNew)'" />
+    <!-- create the item dynamically to prevent spurious rebuilds -->
+    <ItemGroup>
+      <Compile Include="$(InfoVersionFile)" />
+    </ItemGroup>
     <ItemGroup>
       <EmbeddedResource Include="@(ReferenceCopyLocalPaths)" Condition="'%(ReferenceCopyLocalPaths.Extension)' == '.dll'">
         <LogicalName>$([System.String]::new('%(ReferenceCopyLocalPaths.DestinationSubDirectory)%(ReferenceCopyLocalPaths.Filename)%(ReferenceCopyLocalPaths.Extension)').ToLowerInvariant ())</LogicalName>
